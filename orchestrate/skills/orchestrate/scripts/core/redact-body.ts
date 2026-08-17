@@ -1,7 +1,14 @@
 const MAX_BODY_CHARS = 2_048;
 const SENSITIVE_KEY_RE = /token|secret|password|api[_-]?key|authorization/i;
+// The keyword allows affixes on both sides. Anchoring it with \b on each side
+// (the previous form) misses every PREFIXED environment-variable name, because `_`
+// is a word character so there is no boundary between `_` and `token`. That let
+// GITHUB_TOKEN=, AWS_SECRET_ACCESS_KEY=, STRIPE_SECRET_KEY= and DB_PASSWORD= pass
+// through unredacted, which are the commonest real credential shapes there are.
+// The captured key is still re-tested against SENSITIVE_KEY_RE below, so widening
+// the match here cannot widen what counts as sensitive.
 const SENSITIVE_ASSIGNMENT_RE =
-  /\b(token|secret|password|api[_-]?key|authorization)\b\s*[:=]\s*\S+/gi;
+  /\b([A-Za-z0-9_.-]*(?:token|secret|password|api[_-]?key|authorization)[A-Za-z0-9_.-]*)\b\s*[:=]\s*\S+/gi;
 const PATH_PATTERNS = [
   { re: /^\/workspace\/\S*/gm, reason: "contains /workspace path" },
   { re: /^\/Users\/\S*/gm, reason: "contains /Users path" },

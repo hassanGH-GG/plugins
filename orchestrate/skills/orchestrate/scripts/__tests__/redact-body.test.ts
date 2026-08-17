@@ -41,6 +41,39 @@ describe("redactBody", () => {
     expect(redactBody(`\`${sha}\``).reasons).toEqual([]);
   });
 
+  test.each([
+    ["GITHUB_TOKEN=ghp_deadbeefcafe", "ghp_deadbeefcafe"],
+    ["AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI0K7", "wJalrXUtnFEMI0K7"],
+    ["STRIPE_SECRET_KEY=sk_live_51H", "sk_live_51H"],
+    ["DB_PASSWORD=hunter2", "hunter2"],
+    ["MY_API_KEY=abc123", "abc123"],
+  ])("redacts prefixed env-var credentials: %s", (input, value) => {
+    // Regression. The keyword used to be anchored with \b on both sides, and `_` is
+    // a word character, so there was no boundary between `_` and `token` and every
+    // PREFIXED environment-variable name passed through unredacted. Those are the
+    // commonest real credential shapes, and AWS_SECRET_ACCESS_KEY is the canonical
+    // leaked one, so this was the gap that mattered most.
+    const result = redactBody(input);
+
+    expect(result.text).not.toContain(value);
+    expect(result.text).toContain("[redacted]");
+    expect(result.reasons).toContain("contains sensitive key");
+  });
+
+  test("still redacts the bare forms the old anchoring did catch", () => {
+    for (const input of ["token=abc", "password=hunter2", "api_key=k"]) {
+      expect(redactBody(input).text).toContain("[redacted]");
+    }
+  });
+
+  test("does not redact a key merely named without a value", () => {
+    // Widening the key match must not turn advice into a redaction.
+    const result = redactBody("read it from GITHUB_TOKEN in the environment");
+
+    expect(result.text).toBe("read it from GITHUB_TOKEN in the environment");
+    expect(result.reasons).toEqual([]);
+  });
+
   test("allows concise operational context", () => {
     const result = redactBody("blocked: docker rate-limit on redis:7");
 
