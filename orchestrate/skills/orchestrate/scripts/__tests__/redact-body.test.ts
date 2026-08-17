@@ -83,3 +83,50 @@ describe("redactBody", () => {
     });
   });
 });
+
+// An adversarial review of the published output found the redactor stamping
+// `[redacted]` on a line that still carried the live credential. Output that
+// advertises screening while shipping the secret is worse than no redaction,
+// because a reader stops looking at it.
+describe("the value half of an assignment", () => {
+  test("takes the token after an auth scheme, not just the scheme word", () => {
+    // Was: "Authorization=[redacted] ghp_liveSecretValue123".
+    const { text } = redactBody("Authorization: Bearer ghp_liveSecretValue123");
+    expect(text).not.toContain("ghp_liveSecretValue123");
+    expect(text).toBe("Authorization=[redacted]");
+    for (const scheme of ["Basic", "Token", "Digest"]) {
+      expect(redactBody(`Authorization: ${scheme} sEcReTvALue`).text).not.toContain("sEcReTvALue");
+    }
+  });
+
+  test("takes a quoted value containing spaces", () => {
+    // `\S+` stopped at the first space and left the rest of the secret in place.
+    const { text } = redactBody('DB_PASSWORD="hunter 2 spaces"');
+    expect(text).not.toContain("hunter");
+    expect(text).not.toContain("spaces");
+  });
+
+  test("reads a quoted KEY, which is the shape a JSON body uses", () => {
+    const { text } = redactBody('{"api_key": "abc123"}');
+    expect(text).not.toContain("abc123");
+  });
+
+  test("knows the AWS and client-secret vocabularies", () => {
+    for (const line of [
+      "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+      "PRIVATE_KEY=-----BEGINRSA",
+      "CLIENT_SECRET=s3cr3t",
+      "MY_CREDENTIAL=abc",
+    ]) {
+      const value = line.split("=")[1];
+      expect(redactBody(line).text).not.toContain(value);
+    }
+  });
+
+  test("still over-redacts rather than under-redacts an ambiguous name", () => {
+    // TOKENS_USED is a counter, not a credential, and it is redacted anyway. That
+    // is the correct direction to be wrong in: a screen that fails open ships the
+    // thing it exists to catch.
+    expect(redactBody("TOKENS_USED=15234").text).toBe("TOKENS_USED=[redacted]");
+  });
+});

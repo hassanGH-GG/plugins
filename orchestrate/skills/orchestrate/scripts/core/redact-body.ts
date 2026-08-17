@@ -1,5 +1,6 @@
 const MAX_BODY_CHARS = 2_048;
-const SENSITIVE_KEY_RE = /token|secret|password|api[_-]?key|authorization/i;
+const SENSITIVE_KEY_RE =
+  /token|secret|passwd|password|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credential|authorization/i;
 // The keyword allows affixes on both sides. Anchoring it with \b on each side
 // (the previous form) misses every PREFIXED environment-variable name, because `_`
 // is a word character so there is no boundary between `_` and `token`. That let
@@ -7,8 +8,18 @@ const SENSITIVE_KEY_RE = /token|secret|password|api[_-]?key|authorization/i;
 // through unredacted, which are the commonest real credential shapes there are.
 // The captured key is still re-tested against SENSITIVE_KEY_RE below, so widening
 // the match here cannot widen what counts as sensitive.
+// The VALUE half matters as much as the key half, and it used to be `\S+`, which
+// stops at the first space. `Authorization: Bearer ghp_liveSecret` therefore
+// redacted the word `Bearer` and shipped the token immediately after it, next to a
+// `[redacted]` stamp. Output that advertises screening while carrying the
+// credential is worse than no redaction, because a reader stops looking.
+//
+// So a value is now: an optional auth scheme plus its token, OR a quoted string
+// (which may contain spaces, as `DB_PASSWORD="hunter 2 spaces"` does), OR a bare
+// run. The KEY half also accepts surrounding quotes, because `{"api_key": "abc"}`
+// is the shape a JSON body uses and the unquoted-only form never matched it.
 const SENSITIVE_ASSIGNMENT_RE =
-  /\b([A-Za-z0-9_.-]*(?:token|secret|password|api[_-]?key|authorization)[A-Za-z0-9_.-]*)\b\s*[:=]\s*\S+/gi;
+  /(["']?)([A-Za-z0-9_.-]*(?:token|secret|passwd|password|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credential|authorization)[A-Za-z0-9_.-]*)\1\s*[:=]\s*(?:(?:Bearer|Basic|Token|Digest)\s+\S+|"[^"\n]*"|'[^'\n]*'|\S+)/gi;
 const PATH_PATTERNS = [
   { re: /^\/workspace\/\S*/gm, reason: "contains /workspace path" },
   { re: /^\/Users\/\S*/gm, reason: "contains /Users path" },
@@ -40,8 +51,7 @@ function redactSensitiveAssignments(
   text: string,
   reasons: Set<string>
 ): string {
-  return text.replace(SENSITIVE_ASSIGNMENT_RE, match => {
-    const [key] = match.split(/\s*[:=]\s*/, 1);
+  return text.replace(SENSITIVE_ASSIGNMENT_RE, (match, _quote: string, key: string) => {
     if (SENSITIVE_KEY_RE.test(key ?? "")) {
       reasons.add("contains sensitive key");
       return `${key}=[redacted]`;
